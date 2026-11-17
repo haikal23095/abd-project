@@ -1,0 +1,22 @@
+{
+  "features": [
+    "status_code",
+    "request_rate",
+    "bytes_sent",
+    "is_bot",
+    "method_code"
+  ],
+  "contamination": 0.15,
+  "n_samples": 3000,
+  "sklearn_used": false,
+  "clusters": {
+    "-1": [
+      "Cluster -1 \u00b7 Aggressive Scraper Bot",
+      "Cluster -1 \u00b7 Credential Stuffing Attack",
+      "Cluster -1 \u00b7 Vulnerability Probe / Scanner",
+      "Cluster -1 \u00b7 Rate Limit Exceeded (HTTP 429)"
+    ],
+    "0": "Cluster 0 \u00b7 Normal Web Traffic",
+    "1": "Cluster 1 \u00b7 High-Volume API Polling (Authorized)"
+  }
+}

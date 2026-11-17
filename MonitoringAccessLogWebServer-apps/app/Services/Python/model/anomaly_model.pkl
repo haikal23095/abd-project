@@ -1,0 +1,1 @@
+{"type": "heuristic_fallback", "weights": {"high_rate_threshold": 120.0, "critical_rate_threshold": 300.0, "suspicious_status_codes": [401, 403, 429, 500], "payload_threshold": 500000}}
