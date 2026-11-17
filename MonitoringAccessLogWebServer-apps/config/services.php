@@ -37,9 +37,9 @@ return [
 
     'analytics' => [
         'python_bin' => env('ANALYTICS_PYTHON_BIN', 'python'),
-        'log_path'   => env('ANALYTICS_LOG_PATH', storage_path('logs/access.log')),
-        'mmdb_path'  => env('ANALYTICS_MMDB_PATH', storage_path('app/GeoLite2-Country.mmdb')),
-        'model_path' => env('ANALYTICS_MODEL_PATH', app_path('Services/Python/model/anomaly_model.pkl')),
+        'log_path'   => env('ANALYTICS_LOG_PATH') ? base_path(env('ANALYTICS_LOG_PATH')) : storage_path('logs/access.log'),
+        'mmdb_path'  => env('ANALYTICS_MMDB_PATH') ? base_path(env('ANALYTICS_MMDB_PATH')) : storage_path('app/GeoLite2-Country.mmdb'),
+        'model_path' => env('ANALYTICS_MODEL_PATH') ? base_path(env('ANALYTICS_MODEL_PATH')) : app_path('Services/Python/model/anomaly_model.pkl'),
         'cache_ttl'  => (int) env('ANALYTICS_CACHE_TTL', 300),
         'timeout'    => (int) env('ANALYTICS_TIMEOUT', 120),
     ],

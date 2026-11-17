@@ -1,18 +1,10 @@
-import type { Auth } from '@/types/auth';
+// Global type declarations for the dashboard app
 
-declare module 'react' {
-    interface InputHTMLAttributes<T> {
-        passwordrules?: string;
-    }
-}
+/// <reference types="vite/client" />
+/// <reference types="react" />
+/// <reference types="react-dom" />
 
-declare module '@inertiajs/core' {
-    export interface InertiaConfig {
-        sharedPageProps: {
-            name: string;
-            auth: Auth;
-            sidebarOpen: boolean;
-            [key: string]: unknown;
-        };
-    }
+declare module '*.json' {
+    const value: Record<string, unknown>;
+    export default value;
 }
