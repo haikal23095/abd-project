@@ -1,4 +1,3 @@
-
 import { router } from '@inertiajs/react';
  
 type Metrics = { total_requests: number; bot_proportion: number; peak_rps: number };
