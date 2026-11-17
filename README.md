@@ -8,12 +8,13 @@
 
 ## 📌 Deskripsi Singkat
 
-Dashboard analitik web yang memvisualisasikan data dari file **Nginx/Apache access log** dan database **GeoIP MaxMind**. Aplikasi ini menampilkan:
+Dashboard analitik web yang memvisualisasikan data dari file **Nginx/Apache access log** dan database **GeoIP MaxMind**, dilengkapi dengan sistem **Machine Learning** untuk deteksi anomali traffic. Aplikasi ini menampilkan:
 
 - 🌍 **World Scatter Map** — distribusi request per negara (klik untuk filter)
 - 📈 **Metric Cards** — Total Requests, Bot Proportion, Peak RPS
 - 🏆 **Top 5 URLs** — Bar chart horizontal URL paling sering diakses
 - 📅 **Daily Traffic** — Line chart tren traffic harian
+- 🤖 **Interactive Anomaly & Threat Predictor (ML)** — Pengujian interaktif parameter request (IP, frekuensi RPS, status code, payload, user-agent) untuk memprediksi apakah request tergolong **Normal** atau **Anomali/Serangan** (lengkap dengan anomaly score dan asal negara IP via GeoIP)
 
 > ⚠️ **Dokumentasi arsitektur lengkap ada di [`ARCH_PLAN.md`](./ARCH_PLAN.md)**. Baca file tersebut sebelum mulai coding.
 
@@ -23,10 +24,10 @@ Dashboard analitik web yang memvisualisasikan data dari file **Nginx/Apache acce
 
 | Layer | Teknologi | Keterangan |
 |---|---|---|
-| **Data Engine** | Python 3.10+ | Parsing log (regex), GeoIP lookup (`geoip2`), aggregasi (`pandas`), bot detection (`user-agents`) |
+| **Data Engine & ML** | Python 3.10+ | Parsing log (`regex`), GeoIP lookup (`geoip2`), agregasi (`pandas`), bot detection (`user-agents`), Model ML (`scikit-learn`, `joblib`) |
 | **Backend** | Laravel 11 (PHP 8.2+) | Controller, routing, caching, eksekusi script Python via `Symfony\Process` |
 | **Bridge** | Inertia.js | Penghubung Laravel ↔ React (server-side props, tanpa API terpisah) |
-| **Frontend** | React 18 + TypeScript | Komponen UI, state management via Inertia props |
+| **Frontend** | React 18 + TypeScript | Komponen UI, interactive predictor form, state management via Inertia props |
 | **Styling** | Tailwind CSS 4.x | Utility-first CSS framework |
 | **Charts** | Apache ECharts 5.x | World map, bar chart, line chart (via `echarts-for-react`) |
 
@@ -38,9 +39,14 @@ Dashboard analitik web yang memvisualisasikan data dari file **Nginx/Apache acce
 abd-project/
 ├── app/
 │   ├── Http/Controllers/
-│   │   └── DashboardController.php       ← Controller utama
+│   │   ├── DashboardController.php       ← Controller utama dashboard
+│   │   └── AnomalyPredictionController.php ← Controller endpoint prediksi ML
 │   └── Services/Python/
-│       └── parse_log.py                  ← Script Python parser
+│       ├── parse_log.py                  ← Script Python parser & agregasi log
+│       ├── train_anomaly_model.py        ← Script training model ML (Isolation Forest)
+│       ├── predict_anomaly.py            ← Script inferensi prediksi anomali
+│       └── model/
+│           └── anomaly_model.pkl         ← Model ML tersimpan
 ├── resources/
 │   ├── js/
 │   │   ├── Pages/
@@ -52,7 +58,8 @@ abd-project/
 │   │   │   ├── MetricCard.tsx
 │   │   │   ├── MetricCardsRow.tsx
 │   │   │   ├── TopUrlsChart.tsx
-│   │   │   └── DailyTrafficChart.tsx
+│   │   │   ├── DailyTrafficChart.tsx
+│   │   │   └── AnomalyPredictorModal.tsx ← Form input parameter & hasil prediksi ML
 │   │   ├── types/
 │   │   │   └── dashboard.ts              ← TypeScript interfaces
 │   │   ├── utils/
@@ -94,7 +101,7 @@ npm install
 # Python
 python3 -m venv .venv
 source .venv/bin/activate
-pip install geoip2 pandas user-agents
+pip install geoip2 pandas user-agents scikit-learn joblib
 ```
 
 ### 2. Siapkan File Data
@@ -136,6 +143,7 @@ Buka: **http://localhost:8000/dashboard**
 
 ## 🔄 Alur Data (Ringkas)
 
+### 1. Alur Dashboard Analitik
 ```
 access.log + GeoLite2.mmdb
         │
@@ -152,6 +160,23 @@ access.log + GeoLite2.mmdb
    Dashboard.tsx        ──→  ECharts (Map, Bar, Line) + Metric Cards
 ```
 
+### 2. Alur Prediksi Anomali (Machine Learning)
+```
+User Input Form (IP, URL, RPS, Status Code, Payload)
+        │
+        ▼
+   POST /predict-anomaly (Laravel Controller)
+        │
+        ▼
+   Python predict_anomaly.py (Muat anomaly_model.pkl + GeoIP2)
+        │
+        ▼
+   JSON stdout: { is_anomaly, anomaly_score, risk_level, geo: { country, city } }
+        │
+        ▼
+   Response JSON / Inertia ──→ Modal / Card Hasil Prediksi & Rekomendasi
+```
+
 ---
 
 ## 👥 Pembagian Kerja (Referensi)
@@ -160,10 +185,10 @@ Untuk menghindari miskomunikasi, berikut pembagian area kerja yang disarankan:
 
 | Area | File Utama | Deskripsi |
 |---|---|---|
-| **Python / Data** | `app/Services/Python/parse_log.py` | Parsing regex log, GeoIP lookup, bot detection, aggregasi Pandas, output JSON |
-| **Laravel / Backend** | `DashboardController.php`, `routes/web.php`, `config/services.php` | Route, controller, eksekusi Python, caching |
-| **React / Frontend** | `Dashboard.tsx`, semua file di `Components/Dashboard/` | Layout, komponen chart ECharts, filter interaktif |
-| **Setup / Config** | `vite.config.ts`, `app.blade.php`, `app.tsx`, `.env` | Konfigurasi Inertia, Vite, Tailwind |
+| **Python / Data & ML** | `parse_log.py`, `train_anomaly_model.py`, `predict_anomaly.py` | Parsing regex log, GeoIP lookup, bot detection, aggregasi Pandas, training model ML (Isolation Forest), script inferensi prediksi |
+| **Laravel / Backend** | `DashboardController.php`, `AnomalyPredictionController.php`, `routes/web.php` | Routing, controller analitik & prediksi, eksekusi subprocess Python, validasi input |
+| **React / Frontend** | `Dashboard.tsx`, `Components/Dashboard/*`, `AnomalyPredictorModal.tsx` | Layout dashboard, visualisasi ECharts, modal form interaktif input parameter & card display hasil prediksi ML |
+| **Setup / Config** | `vite.config.ts`, `app.blade.php`, `app.tsx`, `.env` | Konfigurasi Inertia, Vite, Tailwind, environment variable paths |
 
 > 💡 **Tips**: Sebelum mengerjakan bagian masing-masing, baca section yang relevan di [`ARCH_PLAN.md`](./ARCH_PLAN.md). Di sana ada **code skeleton** yang bisa langsung dipakai.
 
