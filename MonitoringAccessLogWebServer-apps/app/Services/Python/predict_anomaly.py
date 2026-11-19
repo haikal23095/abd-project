@@ -9,7 +9,11 @@ import json
 import os
 import re
 import sys
+import warnings
 from datetime import datetime
+
+# Filter unpickling warnings from sklearn version differences
+warnings.filterwarnings("ignore")
 
 # Optional imports with graceful fallbacks
 try:
@@ -137,22 +141,62 @@ def lookup_country(mmdb_path: str, ip: str) -> tuple[str, str]:
 def evaluate_anomaly(data: dict) -> dict:
     bot = 1 if is_bot_ua(data["user_agent"]) else 0
     method_code = METHOD_MAP.get(data["method"], 6)
-    features = [data["status_code"], data["request_rate"], data["payload_bytes"], bot, method_code]
 
     prediction = 1
     score = 0.15
+    model_loaded = False
 
     # Check for Scikit-Learn Model
-    model_loaded = False
     if SKLEARN_AVAILABLE and data["model_path"] and os.path.exists(data["model_path"]):
         try:
-            model = joblib.load(data["model_path"])
-            X = np.array([features])
-            pred_arr = model.predict(X)
-            score_arr = model.decision_function(X)
-            prediction = int(pred_arr[0])
-            score = round(float(score_arr[0]), 4)
-            model_loaded = True
+            loaded_obj = joblib.load(data["model_path"])
+            if isinstance(loaded_obj, dict):
+                model = loaded_obj.get("model")
+                feat_names = loaded_obj.get("feature_names", [])
+                log_cols = loaded_obj.get("log_features", [])
+            else:
+                model = loaded_obj
+                feat_names = getattr(model, "feature_names_in_", None)
+                log_cols = []
+
+            if model is not None:
+                n_feats = getattr(model, "n_features_in_", 5)
+                if n_feats == 7:
+                    # 7-feature model trained on 100M data (ip-minute aggregation):
+                    # ['total_requests', 'unique_urls', 'error_requests', 'total_bytes', 'avg_bytes', 'error_rate', 'bot_ratio']
+                    req_count = max(1.0, float(data["request_rate"]))
+                    is_err = 1.0 if data["status_code"] >= 400 else 0.0
+                    err_reqs = req_count if is_err else 0.0
+                    tot_bytes = float(data["payload_bytes"]) * req_count
+                    avg_b = float(data["payload_bytes"])
+                    err_rate = 1.0 if is_err else 0.0
+                    bot_r = 1.0 if bot else 0.0
+                    uniq_urls = 2.0 if "?" in data["url"] else 1.0
+
+                    row = {
+                        "total_requests": req_count,
+                        "unique_urls": uniq_urls,
+                        "error_requests": err_reqs,
+                        "total_bytes": tot_bytes,
+                        "avg_bytes": avg_b,
+                        "error_rate": err_rate,
+                        "bot_ratio": bot_r,
+                    }
+                    for c in log_cols:
+                        if c in row:
+                            row[c] = float(np.log1p(row[c]))
+
+                    vec = [row.get(col, 0.0) for col in feat_names] if feat_names else list(row.values())
+                    X = np.array([vec])
+                else:
+                    # 5-feature fallback model
+                    X = np.array([[data["status_code"], data["request_rate"], data["payload_bytes"], bot, method_code]])
+
+                pred_arr = model.predict(X)
+                score_arr = model.decision_function(X)
+                prediction = int(pred_arr[0])
+                score = round(float(score_arr[0]), 4)
+                model_loaded = True
         except Exception:
             model_loaded = False
 

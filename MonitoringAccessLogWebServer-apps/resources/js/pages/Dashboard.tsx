@@ -3,25 +3,32 @@ import * as echarts from 'echarts';
 import ReactECharts from 'echarts-for-react';
 import {
     Activity,
+    AlertTriangle,
     BarChart2,
     Bot,
+    CheckCircle,
     ChevronUp,
     ChevronsUpDown,
     Filter,
     Globe,
+    Loader2,
     RotateCcw,
     Search,
+    ShieldAlert,
+    ShieldCheck,
+    Sparkles,
+    X,
     Zap,
 } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import worldJson from '../assets/world.json';
 
 // Register world map once at module level
-echarts.registerMap('world', worldJson as Parameters<typeof echarts.registerMap>[1]);
+echarts.registerMap('world', worldJson as unknown as Parameters<typeof echarts.registerMap>[1]);
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type Metrics = {
+export type Metrics = {
     total_requests: number;
     bot_percentage: number;
     peak_rps: number;
@@ -30,16 +37,16 @@ type Metrics = {
     human_requests: number;
 };
 
-type MapPoint = {
+export type MapPoint = {
     name: string;
     value: [number, number, number]; // [lng, lat, count]
     countryCode: string;
 };
 
-type UrlRow = { url: string; count: number };
-type DayRow = { date: string; count: number };
+export type UrlRow = { url: string; count: number };
+export type DayRow = { date: string; count: number };
 
-type IsolationRow = {
+export type IsolationRow = {
     id: string;
     timestamp: string;
     ip: string;
@@ -55,27 +62,43 @@ type IsolationRow = {
     clusterLabel: string;
 };
 
-type Props = {
-    selectedCountry: string;
-    mapData: MapPoint[];
-    metrics: Metrics;
-    topUrls: UrlRow[];
-    dailyTraffic: DayRow[];
-    isolationForest: IsolationRow[];
-    error: string | null;
+export type PredictResult = {
+    status: string;
+    evaluated_at: string;
+    input: {
+        ip: string;
+        url: string;
+        method: string;
+        status_code: number;
+        request_rate: number;
+        payload_bytes: number;
+        user_agent: string;
+        is_bot: boolean;
+    };
+    prediction: number;
+    is_anomaly: boolean;
+    anomaly_score: number;
+    label: string;
+    risk_level: string;
+    cluster: string;
+    recommendation: string;
+    geo: {
+        country_code: string;
+        country_name: string;
+    };
+};
+
+export type Props = {
+    selectedCountry?: string;
+    mapData?: MapPoint[];
+    metrics?: Metrics;
+    topUrls?: UrlRow[];
+    dailyTraffic?: DayRow[];
+    isolationForest?: IsolationRow[];
+    error?: string | null;
 };
 
 // ─── Constants ───────────────────────────────────────────────────────────────
-
-const QUICK_FILTERS = [
-    { code: 'ALL', label: 'ALL' },
-    { code: 'IR', label: 'IR · Iran' },
-    { code: 'US', label: 'US · United States' },
-    { code: 'FR', label: 'FR · France' },
-    { code: 'DE', label: 'DE · Germany' },
-    { code: 'RU', label: 'RU · Russia' },
-    { code: 'CN', label: 'CN · China' },
-];
 
 const ONLY_PARTIAL = ['selectedCountry', 'metrics', 'topUrls', 'dailyTraffic', 'isolationForest', 'error'];
 
@@ -113,13 +136,20 @@ function fmtAxisNum(n: number): string {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function Dashboard({
-    selectedCountry,
-    mapData,
-    metrics,
-    topUrls,
-    dailyTraffic,
-    isolationForest,
-    error,
+    selectedCountry = 'ALL',
+    mapData = [],
+    metrics = {
+        total_requests: 0,
+        bot_percentage: 0,
+        peak_rps: 0,
+        unique_ips: 0,
+        bot_requests: 0,
+        human_requests: 0,
+    },
+    topUrls = [],
+    dailyTraffic = [],
+    isolationForest = [],
+    error = null,
 }: Props) {
     const country = (selectedCountry || 'ALL').toUpperCase();
     const isFiltered = country !== 'ALL';
@@ -129,7 +159,38 @@ export default function Dashboard({
     const [search, setSearch] = useState('');
     const [sortAsc, setSortAsc] = useState(true);
 
-    // World map is registered at module level via echarts.registerMap above
+    // Interactive Anomaly Predictor Modal state
+    const [isPredictorOpen, setIsPredictorOpen] = useState(false);
+    const [formIp, setFormIp] = useState('185.220.101.34');
+    const [formMethod, setFormMethod] = useState('GET');
+    const [formUrl, setFormUrl] = useState('/.env');
+    const [formStatus, setFormStatus] = useState<number>(403);
+    const [formRate, setFormRate] = useState<number>(180);
+    const [formBytes, setFormBytes] = useState<number>(512);
+    const [formUserAgent, setFormUserAgent] = useState('sqlmap/1.7.2#stable (https://sqlmap.org)');
+    const [predictorLoading, setPredictorLoading] = useState(false);
+    const [predictorResult, setPredictorResult] = useState<PredictResult | null>(null);
+    const [predictorError, setPredictorError] = useState<string | null>(null);
+
+    // Dynamic Quick Filters derived from mapData
+    const quickFilters = useMemo(() => {
+        const topFromMap = [...(mapData || [])]
+            .sort((a, b) => (b.value[2] ?? 0) - (a.value[2] ?? 0))
+            .slice(0, 6)
+            .map((d) => ({
+                code: d.countryCode.toUpperCase(),
+                label: `${d.countryCode.toUpperCase()} · ${d.name}`,
+            }));
+
+        const items = [{ code: 'ALL', label: 'ALL' }, ...topFromMap];
+
+        // Ensure currently filtered country is present in list if not in top 6
+        if (country !== 'ALL' && !items.some((i) => i.code === country)) {
+            items.push({ code: country, label: `Negara ${country}` });
+        }
+
+        return items;
+    }, [mapData, country]);
 
     // ── Navigation helpers ──────────────────────────────────────────────────
     const navigateTo = useCallback(
@@ -150,9 +211,59 @@ export default function Dashboard({
 
     const resetFilter = useCallback(() => navigateTo('ALL'), [navigateTo]);
 
+    // ── Anomaly Prediction Handler ──────────────────────────────────────────
+    const handlePredict = async (e?: React.FormEvent) => {
+        if (e) e.preventDefault();
+        setPredictorLoading(true);
+        setPredictorError(null);
+
+        try {
+            const res = await fetch('/anomaly/predict', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                },
+                body: JSON.stringify({
+                    ip: formIp,
+                    url: formUrl,
+                    method: formMethod,
+                    status_code: Number(formStatus),
+                    request_rate: Number(formRate),
+                    payload_bytes: Number(formBytes),
+                    user_agent: formUserAgent,
+                }),
+            });
+
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.message || 'Gagal memproses evaluasi model.');
+            }
+            setPredictorResult(data);
+        } catch (err: any) {
+            setPredictorError(err?.message || 'Terjadi kesalahan sistem saat inferensi.');
+        } finally {
+            setPredictorLoading(false);
+        }
+    };
+
+    const openPredictorWithRow = (row: IsolationRow) => {
+        setFormIp(row.ip);
+        setFormMethod(row.method);
+        setFormUrl(row.url);
+        setFormStatus(row.statusCode);
+        setFormRate(row.requestRate);
+        setFormBytes(row.bytesSent);
+        setFormUserAgent(row.userAgent);
+        setPredictorResult(null);
+        setPredictorError(null);
+        setIsPredictorOpen(true);
+    };
+
     // ── Map option ─────────────────────────────────────────────────────────
     const mapOption = useMemo<echarts.EChartsOption>(() => {
-        const maxVal = Math.max(...mapData.map((d) => d.value[2] ?? 0), 1);
+        const safeMap = mapData || [];
+        const maxVal = Math.max(...safeMap.map((d) => d.value?.[2] ?? 0), 1);
         return {
             backgroundColor: 'transparent',
             tooltip: {
@@ -208,7 +319,7 @@ export default function Dashboard({
                     name: 'Access Volume',
                     type: 'scatter',
                     coordinateSystem: 'geo',
-                    data: mapData.map((d) => {
+                    data: safeMap.map((d) => {
                         const isSelected = country !== 'ALL' && d.countryCode.toUpperCase() === country;
                         return {
                             ...d,
@@ -261,8 +372,8 @@ export default function Dashboard({
                     itemStyle: { color: '#38bdf8', shadowBlur: 12, shadowColor: 'rgba(56,189,248,0.8)' },
                     data:
                         country === 'ALL'
-                            ? mapData.slice(0, 3)
-                            : mapData.filter((d) => d.countryCode.toUpperCase() === country),
+                            ? safeMap.slice(0, 3)
+                            : safeMap.filter((d) => d.countryCode.toUpperCase() === country),
                 },
             ],
         };
@@ -460,11 +571,30 @@ export default function Dashboard({
                 <div className="mx-auto flex h-16 max-w-[1360px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
                     <div className="flex min-w-0 items-center gap-3">
                         <Activity className="h-5 w-5 shrink-0 text-sky-400" />
-                        <h1 className="truncate text-lg font-bold tracking-tight text-slate-50 sm:text-xl">
-                            Web Access Log Analytics
-                        </h1>
+                        <div>
+                            <h1 className="truncate text-lg font-bold tracking-tight text-slate-50 sm:text-xl">
+                                Web Access Log Analytics
+                            </h1>
+                            <p className="text-[11px] font-mono text-slate-400 hidden sm:block">
+                                GeoIP2 Mapping · ECharts SPA · Isolation Forest Threat Detection
+                            </p>
+                        </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2.5">
+                        {/* Interactive Predictor Trigger */}
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setPredictorError(null);
+                                setIsPredictorOpen(true);
+                            }}
+                            className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3.5 py-1.5 text-xs font-semibold text-sky-400 transition-colors hover:bg-sky-500/20 hover:border-sky-500/50 shadow-sm"
+                            title="Buka form interaktif pengujian Machine Learning Anomaly Predictor"
+                        >
+                            <Sparkles className="h-3.5 w-3.5 text-sky-400 animate-pulse" />
+                            <span>Uji Prediksi ML</span>
+                        </button>
+
                         <button
                             type="button"
                             onClick={() => navigateTo(country)}
@@ -474,6 +604,7 @@ export default function Dashboard({
                             <Filter className="h-3.5 w-3.5 text-sky-400" />
                             <span>Filter: {country}</span>
                         </button>
+
                         {isFiltered && (
                             <button
                                 type="button"
@@ -491,8 +622,12 @@ export default function Dashboard({
             <main className="mx-auto max-w-[1360px] space-y-6 px-4 py-6 sm:px-6 lg:px-8">
                 {/* ── Error Banner ── */}
                 {error && (
-                    <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">
-                        ⚠️ {error}
+                    <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm text-rose-300 flex items-start gap-3">
+                        <AlertTriangle className="h-5 w-5 shrink-0 text-rose-400 mt-0.5" />
+                        <div>
+                            <p className="font-semibold text-rose-200">Perhatian Sistem Analytics:</p>
+                            <p className="mt-0.5 text-xs text-rose-300/90">{error}</p>
+                        </div>
                     </div>
                 )}
 
@@ -505,10 +640,10 @@ export default function Dashboard({
                             </h2>
                             <p className="mt-0.5 text-xs text-slate-400 sm:text-sm">
                                 Klik gelembung negara pada peta atau tombol di bawah untuk memfilter metrik dan grafik
-                                melalui Inertia router
+                                melalui Inertia partial reload
                                 <span className="mx-1.5 text-slate-600" aria-hidden="true">·</span>
                                 <span className="font-mono tabular-nums text-slate-300">
-                                    {mapData.length} lokasi terdeteksi
+                                    {(mapData || []).length} lokasi terdeteksi
                                 </span>
                             </p>
                         </div>
@@ -521,7 +656,7 @@ export default function Dashboard({
                     </div>
 
                     <div className="mt-4 h-[360px] w-full overflow-hidden rounded-lg border border-slate-800/60 bg-slate-950/60 sm:h-[430px]">
-                        {mapData.length > 0 ? (
+                        {(mapData || []).length > 0 ? (
                             <ReactECharts
                                 option={mapOption}
                                 onEvents={mapEvents}
@@ -532,16 +667,16 @@ export default function Dashboard({
                         ) : (
                             <div className="flex h-full items-center justify-center text-sm text-slate-400">
                                 <Globe className="mr-2 h-5 w-5 opacity-50" />
-                                Tidak ada data peta. Pastikan access.log terisi.
+                                Tidak ada data peta. Pastikan file access.log terisi.
                             </div>
                         )}
                     </div>
 
-                    {/* Quick Filter Bar */}
+                    {/* Dynamic Quick Filter Bar */}
                     <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800/80 pt-4">
                         <span className="text-xs font-medium text-slate-400">Filter Cepat Negara:</span>
                         <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Quick filter negara">
-                            {QUICK_FILTERS.map((f) => {
+                            {quickFilters.map((f) => {
                                 const active = country === f.code;
                                 return (
                                     <button
@@ -578,18 +713,18 @@ export default function Dashboard({
                                 {fmtNumber(metrics.total_requests)}
                             </p>
                             <span className="font-mono text-xs tabular-nums text-slate-400">
-                                Filter: {country}
+                                {metrics.unique_ips.toLocaleString('id-ID')} unique IPs
                             </span>
                         </div>
                         <p className="mt-2 text-xs text-slate-400">
-                            Akumulasi seluruh HTTP access log yang tercatat pada periode aktif
+                            Akumulasi seluruh HTTP access log yang tercatat ({country === 'ALL' ? 'Global' : country})
                         </p>
                     </div>
 
                     {/* Proporsi Bot/Crawler */}
                     <div className="flex flex-col justify-between rounded-xl border border-slate-800/90 bg-slate-900/60 p-5">
                         <div className="flex items-center justify-between gap-3">
-                            <span className="text-sm font-medium text-slate-400">Proporsi Bot/Crawler</span>
+                            <span className="text-sm font-medium text-slate-400">Proporsi Bot / Crawler</span>
                             <Bot className="h-4 w-4 shrink-0 text-amber-400" />
                         </div>
                         <div className="mt-3 flex items-baseline justify-between gap-2">
@@ -597,11 +732,11 @@ export default function Dashboard({
                                 {fmtPct(metrics.bot_percentage)}
                             </p>
                             <span className="font-mono text-xs tabular-nums text-amber-400/90">
-                                User-Agent Otomatis
+                                {metrics.bot_requests.toLocaleString('id-ID')} bot / {metrics.human_requests.toLocaleString('id-ID')} user
                             </span>
                         </div>
                         <p className="mt-2 text-xs text-slate-400">
-                            Rasio request dari indeksasi mesin pencari, scraper, dan automated bot
+                            Rasio otomatisasi search spider, scraper, dan scripted HTTP tools
                         </p>
                     </div>
 
@@ -632,9 +767,14 @@ export default function Dashboard({
                 >
                     <div className="flex flex-col justify-between gap-4 border-b border-slate-800/80 pb-4 lg:flex-row lg:items-center">
                         <div>
-                            <h2 className="text-base font-semibold text-slate-100 sm:text-lg">
-                                Hasil Clustering &amp; Deteksi Anomali Request (Model Isolation Forest)
-                            </h2>
+                            <div className="flex items-center gap-2">
+                                <h2 className="text-base font-semibold text-slate-100 sm:text-lg">
+                                    Hasil Evaluasi &amp; Deteksi Anomali Request (Isolation Forest ML)
+                                </h2>
+                                <span className="inline-flex items-center rounded-md bg-sky-500/20 px-2 py-0.5 font-mono text-[11px] font-semibold text-sky-300">
+                                    Model scikit-learn
+                                </span>
+                            </div>
                             <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-xs tabular-nums text-slate-400">
                                 <span>Sampel Dievaluasi: {isoStats.total}</span>
                                 <span aria-hidden="true">·</span>
@@ -697,7 +837,7 @@ export default function Dashboard({
                                     <th className="whitespace-nowrap px-3 py-2.5">Negara</th>
                                     <th className="whitespace-nowrap px-3 py-2.5">Request Endpoint</th>
                                     <th className="whitespace-nowrap px-3 py-2.5 text-right">Status</th>
-                                    <th className="whitespace-nowrap px-3 py-2.5 text-right">Rate (req/mnt)</th>
+                                    <th className="whitespace-nowrap px-3 py-2.5 text-right">Rate</th>
                                     <th className="whitespace-nowrap px-3 py-2.5 text-right">Payload</th>
                                     <th className="whitespace-nowrap px-3 py-2.5 text-right">
                                         <button
@@ -715,7 +855,7 @@ export default function Dashboard({
                                         </button>
                                     </th>
                                     <th className="whitespace-nowrap py-2.5 pl-3">
-                                        Hasil Label / Cluster Isolation Forest
+                                        Hasil Cluster &amp; Aksi
                                     </th>
                                 </tr>
                             </thead>
@@ -747,7 +887,7 @@ export default function Dashboard({
                                                         {row.countryCode}
                                                     </button>
                                                 </td>
-                                                <td className="max-w-[260px] px-3 py-2.5">
+                                                <td className="max-w-[240px] px-3 py-2.5">
                                                     <div
                                                         className="truncate font-mono text-slate-100"
                                                         title={`${row.method} ${row.url}`}
@@ -757,7 +897,7 @@ export default function Dashboard({
                                                                 row.method === 'POST'
                                                                     ? 'text-amber-400'
                                                                     : 'text-sky-400'
-                                                            }`}
+                                                             }`}
                                                         >
                                                             {row.method}
                                                         </span>
@@ -795,16 +935,26 @@ export default function Dashboard({
                                                         : row.anomalyScore.toFixed(3)}
                                                 </td>
                                                 <td className="whitespace-nowrap py-2.5 pl-3">
-                                                    <div className="flex items-center gap-2 font-mono text-xs">
-                                                        <span
-                                                            className={`font-semibold ${isAnomaly ? 'text-rose-400' : 'text-emerald-400'}`}
+                                                    <div className="flex items-center justify-between gap-3">
+                                                        <div className="flex items-center gap-2 font-mono text-xs">
+                                                            <span
+                                                                className={`font-semibold ${isAnomaly ? 'text-rose-400' : 'text-emerald-400'}`}
+                                                            >
+                                                                {isAnomaly ? 'Label -1 (Anomali)' : 'Label +1 (Normal)'}
+                                                            </span>
+                                                            <span className="text-slate-600" aria-hidden="true">·</span>
+                                                            <span className="font-sans text-slate-300">
+                                                                {row.clusterLabel}
+                                                            </span>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => openPredictorWithRow(row)}
+                                                            className="rounded border border-slate-700 bg-slate-800/80 px-2 py-0.5 font-mono text-[10px] text-slate-300 hover:border-sky-500 hover:text-sky-300 transition-colors"
+                                                            title="Salin parameter ke form pengujian ML Predictor"
                                                         >
-                                                            {isAnomaly ? 'Label -1 (Anomali)' : 'Label +1 (Normal)'}
-                                                        </span>
-                                                        <span className="text-slate-600" aria-hidden="true">·</span>
-                                                        <span className="font-sans text-slate-300">
-                                                            {row.clusterLabel}
-                                                        </span>
+                                                            Uji di ML ↗
+                                                        </button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -826,7 +976,7 @@ export default function Dashboard({
                     </div>
                 </section>
 
-                {/* ── Section 4 & 5: URL Chart + Traffic Chart (side by side) ── */}
+                {/* ── Section 4 & 5: URL Chart + Traffic Chart ── */}
                 <section className="grid grid-cols-1 items-stretch gap-6 lg:grid-cols-2">
                     {/* URL Paling Sering Diminta */}
                     <div className="flex flex-col justify-between rounded-xl border border-slate-800/90 bg-slate-900/60 p-5 sm:p-6">
@@ -836,7 +986,7 @@ export default function Dashboard({
                                     URL Paling Sering Diminta
                                 </h3>
                                 <p className="mt-0.5 text-xs text-slate-400">
-                                    Top 5 endpoint berdasarkan jumlah hit HTTP ({country})
+                                    Top 5 endpoint berdasarkan akumulasi request ({country})
                                 </p>
                             </div>
                             <BarChart2 className="mt-1 h-4 w-4 shrink-0 text-slate-400" />
@@ -887,6 +1037,263 @@ export default function Dashboard({
                     </div>
                 </section>
             </main>
+
+            {/* ── Interactive Machine Learning Predictor Modal ── */}
+            {isPredictorOpen && (
+                <div
+                    role="dialog"
+                    aria-modal="true"
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm animate-in fade-in duration-150"
+                >
+                    <div className="relative flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl">
+                        {/* Modal Header */}
+                        <div className="flex items-center justify-between border-b border-slate-800 px-6 py-4">
+                            <div className="flex items-center gap-3">
+                                <Sparkles className="h-5 w-5 text-sky-400" />
+                                <div>
+                                    <h3 className="text-base font-bold text-slate-100">
+                                        Interactive Anomaly &amp; Threat Predictor (ML)
+                                    </h3>
+                                    <p className="text-xs text-slate-400">
+                                        Inferensi parameter request menggunakan model Isolation Forest &amp; MaxMind GeoIP
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setIsPredictorOpen(false)}
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-100 transition-colors"
+                            >
+                                <X className="h-5 w-5" />
+                            </button>
+                        </div>
+
+                        {/* Modal Body */}
+                        <div className="overflow-y-auto p-6 space-y-6">
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                {/* Form Inputs */}
+                                <form onSubmit={handlePredict} className="space-y-4">
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="block text-xs font-medium text-slate-300">Client IP</label>
+                                            <input
+                                                type="text"
+                                                value={formIp}
+                                                onChange={(e) => setFormIp(e.target.value)}
+                                                className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 focus:border-sky-500 focus:outline-none"
+                                                placeholder="e.g. 185.220.101.34"
+                                                required
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-medium text-slate-300">HTTP Method</label>
+                                            <select
+                                                value={formMethod}
+                                                onChange={(e) => setFormMethod(e.target.value)}
+                                                className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 focus:border-sky-500 focus:outline-none"
+                                            >
+                                                <option value="GET">GET</option>
+                                                <option value="POST">POST</option>
+                                                <option value="PUT">PUT</option>
+                                                <option value="DELETE">DELETE</option>
+                                                <option value="HEAD">HEAD</option>
+                                                <option value="OPTIONS">OPTIONS</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-xs font-medium text-slate-300">Request URL Endpoint</label>
+                                        <input
+                                            type="text"
+                                            value={formUrl}
+                                            onChange={(e) => setFormUrl(e.target.value)}
+                                            className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 focus:border-sky-500 focus:outline-none"
+                                            placeholder="e.g. /.env atau /api/v1/auth"
+                                            required
+                                        />
+                                    </div>
+
+                                    <div className="grid grid-cols-3 gap-3">
+                                        <div>
+                                            <label className="block text-xs font-medium text-slate-300">Status Code</label>
+                                            <input
+                                                type="number"
+                                                value={formStatus}
+                                                onChange={(e) => setFormStatus(Number(e.target.value))}
+                                                className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 focus:border-sky-500 focus:outline-none"
+                                                placeholder="200"
+                                                required
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-medium text-slate-300">Rate (req/mnt)</label>
+                                            <input
+                                                type="number"
+                                                value={formRate}
+                                                onChange={(e) => setFormRate(Number(e.target.value))}
+                                                className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 focus:border-sky-500 focus:outline-none"
+                                                placeholder="15"
+                                                required
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-medium text-slate-300">Payload (Bytes)</label>
+                                            <input
+                                                type="number"
+                                                value={formBytes}
+                                                onChange={(e) => setFormBytes(Number(e.target.value))}
+                                                className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 focus:border-sky-500 focus:outline-none"
+                                                placeholder="1540"
+                                                required
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-xs font-medium text-slate-300">HTTP User-Agent</label>
+                                        <textarea
+                                            value={formUserAgent}
+                                            onChange={(e) => setFormUserAgent(e.target.value)}
+                                            rows={4}
+                                            className="mt-1 w-full min-h-[100px] resize-y rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 focus:border-sky-500 focus:outline-none"
+                                            placeholder="Contoh: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 atau sqlmap/1.5#stable"
+                                        />
+                                    </div>
+
+                                    <button
+                                        type="submit"
+                                        disabled={predictorLoading}
+                                        className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-sky-500 px-4 py-2.5 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50 transition-colors shadow-md"
+                                    >
+                                        {predictorLoading ? (
+                                            <>
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                <span>Memproses Inferensi ML...</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Sparkles className="h-4 w-4" />
+                                                <span>Jalankan Prediksi Anomali Model</span>
+                                            </>
+                                        )}
+                                    </button>
+                                </form>
+
+                                {/* Result Preview Panel */}
+                                <div className="flex flex-col justify-between rounded-xl border border-slate-800 bg-slate-950 p-5">
+                                    {predictorError && (
+                                        <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300 flex items-start gap-2">
+                                            <AlertTriangle className="h-4 w-4 shrink-0 text-rose-400 mt-0.5" />
+                                            <span>{predictorError}</span>
+                                        </div>
+                                    )}
+
+                                    {predictorResult ? (
+                                        <div className="space-y-4">
+                                            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                                                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                                                    Status Klasifikasi:
+                                                </span>
+                                                <span
+                                                    className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 font-mono text-xs font-bold ${
+                                                        predictorResult.is_anomaly
+                                                            ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                                                            : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                                    }`}
+                                                >
+                                                    {predictorResult.is_anomaly ? (
+                                                        <ShieldAlert className="h-3.5 w-3.5" />
+                                                    ) : (
+                                                        <ShieldCheck className="h-3.5 w-3.5" />
+                                                    )}
+                                                    {predictorResult.label} (
+                                                    {predictorResult.prediction === -1 ? '-1' : '+1'})
+                                                </span>
+                                            </div>
+
+                                            <div className="grid grid-cols-2 gap-3 text-xs font-mono">
+                                                <div className="rounded-lg border border-slate-800/80 bg-slate-900/60 p-3">
+                                                    <span className="text-[11px] text-slate-500">Anomaly Score</span>
+                                                    <p
+                                                        className={`text-lg font-bold ${
+                                                            predictorResult.anomaly_score < 0
+                                                                ? 'text-rose-400'
+                                                                : 'text-emerald-400'
+                                                        }`}
+                                                    >
+                                                        {predictorResult.anomaly_score > 0 ? '+' : ''}
+                                                        {predictorResult.anomaly_score.toFixed(4)}
+                                                    </p>
+                                                    <span className="text-[10px] text-slate-500">
+                                                        (&lt; 0.0 = Anomali)
+                                                    </span>
+                                                </div>
+
+                                                <div className="rounded-lg border border-slate-800/80 bg-slate-900/60 p-3">
+                                                    <span className="text-[11px] text-slate-500">Risk Level &amp; Geo</span>
+                                                    <p className="text-sm font-bold text-slate-100">
+                                                        {predictorResult.risk_level}
+                                                    </p>
+                                                    <p className="truncate text-[11px] text-sky-400">
+                                                        🌍 {predictorResult.geo?.country_name} (
+                                                        {predictorResult.geo?.country_code})
+                                                    </p>
+                                                </div>
+                                            </div>
+
+                                            <div className="rounded-lg border border-slate-800/80 bg-slate-900/60 p-3">
+                                                <span className="text-[11px] font-semibold text-slate-400">
+                                                    Cluster Deteksi:
+                                                </span>
+                                                <p className="mt-1 font-mono text-xs font-medium text-slate-200">
+                                                    {predictorResult.cluster}
+                                                </p>
+                                            </div>
+
+                                            <div className="rounded-lg border border-sky-500/20 bg-sky-500/5 p-3">
+                                                <span className="text-[11px] font-semibold text-sky-400">
+                                                    Rekomendasi Tindakan:
+                                                </span>
+                                                <p className="mt-1 text-xs text-slate-300">
+                                                    {predictorResult.recommendation}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="flex flex-col items-center justify-center py-12 text-center text-slate-500">
+                                            <Sparkles className="h-10 w-10 text-slate-700 mb-3" />
+                                            <p className="text-xs">
+                                                Pilih salah satu preset di atas atau ubah parameter form, lalu klik{' '}
+                                                <span className="text-sky-400 font-semibold">
+                                                    Jalankan Prediksi Anomali
+                                                </span>
+                                                .
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-500">
+                                        <span>Model: Isolation Forest</span>
+                                        <span>Features: status, rate, bytes, bot, method</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Modal Footer */}
+                        <div className="border-t border-slate-800 px-6 py-3 bg-slate-950/60 flex justify-end">
+                            <button
+                                type="button"
+                                onClick={() => setIsPredictorOpen(false)}
+                                className="rounded-lg border border-slate-700 bg-slate-800 px-4 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 transition-colors"
+                            >
+                                Tutup
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

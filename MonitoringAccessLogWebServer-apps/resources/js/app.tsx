@@ -1,7 +1,8 @@
+import '../css/app.css';
 import { createInertiaApp } from '@inertiajs/react';
 import { createRoot } from 'react-dom/client';
 
-const appName = import.meta.env.VITE_APP_NAME || 'Web Analytics';
+const appName = import.meta.env.VITE_APP_NAME || 'Web Access Log Analytics';
 
 const pages = import.meta.glob('./pages/**/*.tsx');
 

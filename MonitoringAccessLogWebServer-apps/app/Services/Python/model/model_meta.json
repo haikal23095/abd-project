@@ -8,7 +8,7 @@
   ],
   "contamination": 0.15,
   "n_samples": 3000,
-  "sklearn_used": false,
+  "sklearn_used": true,
   "clusters": {
     "-1": [
       "Cluster -1 \u00b7 Aggressive Scraper Bot",

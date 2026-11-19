@@ -16,36 +16,47 @@ class AnomalyPredictionController extends Controller
 
     public function predict(Request $request): JsonResponse
     {
-        // Sesuaikan fitur dengan train_anomaly_model.py / predict_anomaly.py
-        $features = $request->validate([
-            'total_requests' => ['required', 'numeric', 'min:0'],
-            'unique_ips'     => ['required', 'numeric', 'min:0'],
-            'error_rate'     => ['required', 'numeric', 'between:0,100'],
-            'bot_ratio'      => ['required', 'numeric', 'between:0,100'],
-            'avg_bytes'      => ['required', 'numeric', 'min:0'],
+        $validated = $request->validate([
+            'ip'            => ['nullable', 'string', 'max:45'],
+            'url'           => ['nullable', 'string', 'max:500'],
+            'method'        => ['nullable', 'string', 'max:10'],
+            'status_code'   => ['nullable', 'integer', 'min:100', 'max:599'],
+            'status'        => ['nullable', 'integer', 'min:100', 'max:599'],
+            'request_rate'  => ['nullable', 'numeric', 'min:0'],
+            'rate'          => ['nullable', 'numeric', 'min:0'],
+            'payload_bytes' => ['nullable', 'integer', 'min:0'],
+            'bytes'         => ['nullable', 'integer', 'min:0'],
+            'user_agent'    => ['nullable', 'string', 'max:500'],
         ]);
 
-        $features = array_map('floatval', $features);
+        $payload = [
+            'ip'            => $validated['ip'] ?? '127.0.0.1',
+            'url'           => $validated['url'] ?? '/',
+            'method'        => strtoupper($validated['method'] ?? 'GET'),
+            'status_code'   => (int) ($validated['status_code'] ?? ($validated['status'] ?? 200)),
+            'request_rate'  => (float) ($validated['request_rate'] ?? ($validated['rate'] ?? 10.0)),
+            'payload_bytes' => (int) ($validated['payload_bytes'] ?? ($validated['bytes'] ?? 1500)),
+            'user_agent'    => $validated['user_agent'] ?? '',
+        ];
 
         if (! is_file(app_path('Services/Python/model/anomaly_model.pkl'))) {
             return response()->json([
+                'status'  => 'error',
                 'message' => 'Model belum tersedia. Jalankan train_anomaly_model.py terlebih dahulu.',
             ], 503);
         }
 
         try {
-            $result = $this->python->predictAnomaly($features);
+            $result = $this->python->predictAnomaly($payload);
         } catch (Throwable $e) {
             Log::error('Anomaly: predict_anomaly.py gagal', ['error' => $e->getMessage()]);
 
-            return response()->json(['message' => 'Prediksi gagal diproses.'], 500);
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'Prediksi gagal diproses: ' . $e->getMessage(),
+            ], 500);
         }
 
-        return response()->json([
-            'is_anomaly'    => (bool) ($result['is_anomaly'] ?? false),
-            'anomaly_score' => (float) ($result['anomaly_score'] ?? 0),
-            'label'         => $result['label'] ?? (($result['is_anomaly'] ?? false) ? 'anomaly' : 'normal'),
-            'input'         => $features,
-        ]);
+        return response()->json($result);
     }
 }
